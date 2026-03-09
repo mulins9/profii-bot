@@ -9,8 +9,8 @@ import os
 TELEGRAM_TOKEN = "8776463968:AAEPkERlkvBuN9WsKZ9FlqVpeOa0PET5Euc"  # Вставьте свой токен
 
 # Yandex GPT настройки (нужно заполнить!)
-YANDEX_API_KEY = "АQVNх605HheWLBkКgGoс3ROIТ_4bСUІ8qMnYeWGk"  # Вставьте API-ключ
-YANDEX_FOLDER_ID = "b1gggr7mfpg3htc999vb/iam/service-account/ajek0dj3m8jd1olkqfuq"  # Вставьте ID папки
+YANDEX_API_KEY = "AQVNx605HheWLBkKgGoc3ROIT_4bCUI8qMnYeWGk"  # Вставьте API-ключ
+YANDEX_FOLDER_ID = "b1gggr7mfpg3htc999vb"  # Вставьте ID папки
 YANDEX_GPT_MODEL = "yandexgpt-lite"  # Можно использовать "yandexgpt" для более мощной версии
 # ===========================
 
@@ -241,7 +241,10 @@ def format_profession(prof):
 @bot.message_handler(commands=['start'])
 def start_command(message):
     user_id = message.from_user.id
-    user_answers[user_id] = []
+    user_answers[user_id] = []  # Очищаем состояние теста
+    
+    # Убираем клавиатуру, если она была
+    markup = telebot.types.ReplyKeyboardRemove()
     
     welcome = """
 🚀 *Привет! Я ПрофИИ — твой навигатор в мире профессий!*
@@ -258,7 +261,7 @@ def start_command(message):
 
 Или нажми /test, чтобы пройти тест.
     """
-    bot.send_message(message.chat.id, welcome, parse_mode="Markdown")
+    bot.send_message(message.chat.id, welcome, parse_mode="Markdown", reply_markup=markup)
 
 # ======== КОМАНДА /TEST ========
 @bot.message_handler(commands=['test'])
@@ -285,8 +288,7 @@ def ask_question(chat_id, user_id, question_index):
     else:
         # Вопросы закончились - показываем результат
         show_result(chat_id, user_id)
-# ======== ОБРАБОТКА СООБЩЕНИЙ ========
-@bot.message_handler(func=lambda message: True)
+
 # ======== ОБРАБОТКА СООБЩЕНИЙ ========
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
@@ -388,7 +390,3 @@ if __name__ == "__main__":
     print(f"✅ Загружено профессий: {len(professions)}")
     print("✅ Yandex GPT " + ("настроен" if YANDEX_API_KEY != "ВАШ_API_КЛЮЧ_ОТ_YANDEX_CLOUD" else "НЕ настроен"))
     bot.infinity_polling()
-    bot.infinity_polling()
-
-
-
