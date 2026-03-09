@@ -6,11 +6,11 @@ import time
 import os
 
 # ======== НАСТРОЙКИ ========
-TELEGRAM_TOKEN = "ВАШ_ТОКЕН_ОТ_BOTFATHER"  # Вставьте свой токен
+TELEGRAM_TOKEN = "8776463968:AAEPkERlkvBuN9WsKZ9FlqVpeOa0PET5Euc"  # Вставьте свой токен
 
 # Yandex GPT настройки (нужно заполнить!)
-YANDEX_API_KEY = "ВАШ_API_КЛЮЧ_ОТ_YANDEX_CLOUD"  # Вставьте API-ключ
-YANDEX_FOLDER_ID = "ВАШ_FOLDER_ID"  # Вставьте ID папки
+YANDEX_API_KEY = "АQVNх605HheWLBkКgGoс3ROIТ_4bСUІ8qMnYeWGk"  # Вставьте API-ключ
+YANDEX_FOLDER_ID = "b1gggr7mfpg3htc999vb/iam/service-account/ajek0dj3m8jd1olkqfuq"  # Вставьте ID папки
 YANDEX_GPT_MODEL = "yandexgpt-lite"  # Можно использовать "yandexgpt" для более мощной версии
 # ===========================
 
@@ -369,3 +369,4 @@ if __name__ == "__main__":
     print("✅ Yandex GPT " + ("настроен" if YANDEX_API_KEY != "ВАШ_API_КЛЮЧ_ОТ_YANDEX_CLOUD" else "НЕ настроен"))
     bot.infinity_polling()
     bot.infinity_polling()
+
