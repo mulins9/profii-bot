@@ -274,15 +274,17 @@ def ask_question(chat_id, user_id, question_index):
         q = questions[question_index]
         text = f"*Вопрос {question_index + 1} из {len(questions)}*\n\n{q['text']}"
         
+        # СОЗДАЁМ КЛАВИАТУРУ
         markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
         for opt in q['options']:
             markup.add(telebot.types.KeyboardButton(opt['text']))
         
+        # ОТПРАВЛЯЕМ С КЛАВИАТУРОЙ
         bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
+        
         user_answers[user_id].append({"question_index": question_index})
     else:
         show_result(chat_id, user_id)
-
 # ======== ОБРАБОТКА СООБЩЕНИЙ ========
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
@@ -369,4 +371,5 @@ if __name__ == "__main__":
     print("✅ Yandex GPT " + ("настроен" if YANDEX_API_KEY != "ВАШ_API_КЛЮЧ_ОТ_YANDEX_CLOUD" else "НЕ настроен"))
     bot.infinity_polling()
     bot.infinity_polling()
+
 
