@@ -1,19 +1,116 @@
 import telebot
 import json
 import random
+import requests
 import os
 import time
-from gigachat import GigaChat
-from gigachat.models import Chat, Messages, MessagesRole
+import uuid
+from datetime import datetime, timedelta
 
 # ======== НАСТРОЙКИ ========
 TELEGRAM_TOKEN = "8776463968:AAEPkERlkvBuN9WsKZ9FlqVpeOa0PET5Euc"
 
 # GigaChat настройки (ваш ключ)
-GIGACHAT_CREDENTIALS = "MDE5Y2QzZGYtNzFkMC03MjRlLTljNjMtZDQyYjFlNmI4ZjYyOmIwNGViNDk5LTY5MjktNDJhNi04ODc4LTQ5Y2M5OGMxZGMwNw=="
+GIGACHAT_AUTH_KEY = "MDE5Y2QzZGYtNzFkMC03MjRlLTljNjMtZDQyYjFlNmI4ZjYyOmIwNGViNDk5LTY5MjktNDJhNi04ODc4LTQ5Y2M5OGMxZGMwNw=="
 # ===========================
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
+
+# Кэш для токенов GigaChat
+gigachat_token_cache = {
+    'token': None,
+    'expires_at': None
+}
+
+def get_gigachat_token():
+    """Получает access token для GigaChat API"""
+    global gigachat_token_cache
+    
+    # Проверяем кэш
+    if gigachat_token_cache['token'] and gigachat_token_cache['expires_at'] > datetime.now():
+        return gigachat_token_cache['token']
+    
+    url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+    
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+        'RqUID': str(uuid.uuid4()),
+        'Authorization': f'Basic {GIGACHAT_AUTH_KEY}'
+    }
+    
+    data = {'scope': 'GIGACHAT_API_PERS'}
+    
+    try:
+        print("🔄 Получение токена GigaChat...")
+        
+        # Отключаем проверку SSL (как в curl с флагом -k)
+        response = requests.post(url, headers=headers, data=data, verify=False)
+        
+        if response.status_code == 200:
+            result = response.json()
+            token = result['access_token']
+            expires_in = result['expires_in']
+            
+            gigachat_token_cache['token'] = token
+            gigachat_token_cache['expires_at'] = datetime.now() + timedelta(seconds=expires_in - 60)
+            
+            print("✅ Токен получен")
+            return token
+        else:
+            print(f"❌ Ошибка получения токена: {response.status_code}")
+            print(f"Ответ: {response.text}")
+            return None
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        return None
+
+def ask_gigachat(user_message):
+    """Отправляет запрос к GigaChat"""
+    
+    token = get_gigachat_token()
+    if not token:
+        return None
+    
+    url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
+    
+    headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': f'Bearer {token}'
+    }
+    
+    system_prompt = """Ты — дружелюбный помощник по профориентации для подростков 12-15 лет по имени ПрофИИ.
+Твоя задача — в непринужденной беседе выяснить интересы ребенка и предложить подходящие современные профессии.
+Общайся на понятном языке, используй эмодзи, будь позитивным.
+В конце предложи 2-3 профессии."""
+    
+    payload = {
+        "model": "GigaChat",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message}
+        ],
+        "temperature": 0.7,
+        "max_tokens": 1024
+    }
+    
+    try:
+        print("🔄 Отправка запроса к GigaChat...")
+        response = requests.post(url, headers=headers, json=payload, verify=False)
+        
+        if response.status_code == 200:
+            result = response.json()
+            answer = result['choices'][0]['message']['content']
+            print("✅ Ответ получен")
+            return answer
+        else:
+            print(f"❌ Ошибка: {response.status_code}")
+            print(f"Ответ: {response.text}")
+            return None
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        return None
 
 # ======== ЗАГРУЗКА ПРОФЕССИЙ ========
 def load_professions():
@@ -27,58 +124,13 @@ def load_professions():
         return []
 
 professions = load_professions()
-# ====================================
 
-# Хранилища состояний пользователей
-user_answers = {}  # для ответов на тест
-user_mode = {}     # для режима: 'menu', 'test', 'gigachat'
-
-# ======== ФУНКЦИЯ ЗАПРОСА К GIGACHAT ========
-def ask_gigachat(user_message):
-    """Отправляет запрос к GigaChat и возвращает ответ"""
-    try:
-        print("🔄 Подключение к GigaChat...")
-        
-        # Создаём клиента с отключённой проверкой SSL
-        with GigaChat(
-            credentials=GIGACHAT_CREDENTIALS,
-            verify_ssl_certs=False,
-            timeout=60,
-            model="GigaChat"
-        ) as client:
-            
-            # Системный промпт
-            system_prompt = """Ты — дружелюбный помощник по профориентации для подростков 12-15 лет по имени ПрофИИ.
-Твоя задача — в непринужденной беседе выяснить интересы ребенка и предложить подходящие современные профессии.
-Общайся на понятном языке, используй эмодзи, будь позитивным.
-Задавай уточняющие вопросы, если нужно.
-В конце предложи 2-3 профессии из списка: разработчик нейросетей, промпт-инженер, геймдизайнер, UX-дизайнер, робототехник, оператор дронов, биоинженер, специалист по кибербезопасности, врач, учитель, инженер, психолог."""
-            
-            # Формируем сообщения
-            messages = [
-                Messages(role=MessagesRole.SYSTEM, content=system_prompt),
-                Messages(role=MessagesRole.USER, content=user_message)
-            ]
-            
-            # Отправляем запрос
-            response = client.chat(messages)
-            
-            if response and response.choices:
-                answer = response.choices[0].message.content
-                print(f"✅ Получен ответ от GigaChat")
-                return answer
-            else:
-                print("❌ Пустой ответ от GigaChat")
-                return None
-                
-    except Exception as e:
-        print(f"❌ Ошибка GigaChat: {e}")
-        return None
-# ============================================
+# Хранилища состояний
+user_answers = {}
+user_mode = {}
 
 # ======== ФУНКЦИЯ ГЛАВНОГО МЕНЮ ========
 def show_main_menu(chat_id):
-    """Показывает главное меню с двумя кнопками"""
     markup = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     btn1 = telebot.types.KeyboardButton("📋 ПРОЙТИ ТЕСТ")
     btn2 = telebot.types.KeyboardButton("💬 ОБЩЕНИЕ С GigaChat")
@@ -87,142 +139,83 @@ def show_main_menu(chat_id):
     welcome_text = """
 🚀 *Добро пожаловать в ПрофИИ!*
 
-Я помогу тебе найти профессию мечты. Выбери, что хочешь сделать:
+Выбери, что хочешь сделать:
 
-📋 *ПРОЙТИ ТЕСТ* — ответь на 10 вопросов, и я подберу профессии на основе твоих ответов
-
-💬 *ОБЩЕНИЕ С GigaChat* — просто расскажи о своих увлечениях, и искусственный интеллект поможет с выбором
+📋 *ПРОЙТИ ТЕСТ* — ответь на 10 вопросов
+💬 *ОБЩЕНИЕ С GigaChat* — просто поговори со мной
 
 *Попробуй прямо сейчас!* 👇
     """
     bot.send_message(chat_id, welcome_text, parse_mode="Markdown", reply_markup=markup)
-# ========================================
 
-# ======== РАСШИРЕННЫЙ ТЕСТ (10 ВОПРОСОВ) ========
+# ======== ТЕСТ (10 ВОПРОСОВ) ========
 questions = [
     {
         "id": 1,
-        "text": "Какая сфера деятельности тебе ближе? (Выбери наиболее интересное)",
+        "text": "Какая сфера деятельности тебе ближе?",
         "options": [
-            {"text": "🧑‍⚕️ Помощь людям, забота о здоровье", "keywords": ["врач", "ветеринар", "психолог", "медицина", "забота"]},
-            {"text": "📚 Образование, передача знаний", "keywords": ["учитель", "педагогика", "образование", "обучение"]},
-            {"text": "💻 Информационные технологии, программирование", "keywords": ["программирование", "нейросети", "разработчик", "it", "код"]},
-            {"text": "🏗️ Строительство, создание объектов", "keywords": ["инженер", "строитель", "архитектура", "конструировать"]}
+            {"text": "🧑‍⚕️ Помощь людям, забота о здоровье", "keywords": ["врач", "ветеринар", "психолог"]},
+            {"text": "📚 Образование, передача знаний", "keywords": ["учитель", "педагогика"]},
+            {"text": "💻 Информационные технологии, программирование", "keywords": ["программист", "разработчик"]},
+            {"text": "🏗️ Строительство, создание объектов", "keywords": ["инженер", "строитель"]}
         ]
     },
     {
         "id": 2,
         "text": "Какой стиль работы тебе подходит больше?",
         "options": [
-            {"text": "🎯 Работа с людьми, общение, помощь", "keywords": ["врач", "учитель", "психолог", "продавец", "общение"]},
-            {"text": "🧠 Интеллектуальная работа, анализ, исследования", "keywords": ["нейросети", "аналитика", "исследования", "данные", "наука"]},
-            {"text": "✋ Практическая работа руками, создание чего-то", "keywords": ["повар", "электрик", "парикмахер", "инженер", "строитель"]},
-            {"text": "🎨 Творчество, создание нового, дизайн", "keywords": ["дизайн", "креатив", "искусство", "творчество"]}
+            {"text": "🎯 Работа с людьми, общение", "keywords": ["врач", "учитель", "психолог"]},
+            {"text": "🧠 Интеллектуальная работа, анализ", "keywords": ["аналитик", "нейросети"]},
+            {"text": "✋ Практическая работа руками", "keywords": ["повар", "электрик", "строитель"]},
+            {"text": "🎨 Творчество, дизайн", "keywords": ["дизайнер", "архитектор"]}
         ]
     },
     {
         "id": 3,
-        "text": "Какие школьные предметы тебе нравятся больше всего? (Выбери самый любимый)",
+        "text": "Какие школьные предметы тебе нравятся больше всего?",
         "options": [
-            {"text": "🔬 Биология, химия", "keywords": ["врач", "ветеринар", "биоинженерия", "медицина"]},
-            {"text": "🧮 Математика, физика", "keywords": ["инженер", "программирование", "нейросети", "строитель", "электрик"]},
-            {"text": "💻 Информатика", "keywords": ["программирование", "нейросети", "разработчик", "it"]},
-            {"text": "📖 Литература, русский язык, история", "keywords": ["учитель", "юрист", "писатель", "психолог"]},
-            {"text": "🎨 Рисование, технология", "keywords": ["дизайн", "архитектура", "парикмахер", "повар"]}
+            {"text": "🔬 Биология, химия", "keywords": ["врач", "ветеринар", "биоинженер"]},
+            {"text": "🧮 Математика, физика", "keywords": ["инженер", "программист"]},
+            {"text": "💻 Информатика", "keywords": ["программист", "разработчик"]},
+            {"text": "📖 Литература, история", "keywords": ["учитель", "психолог"]},
+            {"text": "🎨 Рисование, технология", "keywords": ["дизайнер", "архитектор"]}
         ]
     },
     {
         "id": 4,
-        "text": "Какая у тебя суперсила? (Твоя главная черта характера)",
+        "text": "Какая у тебя суперсила?",
         "options": [
-            {"text": "💪 Ответственность и надёжность", "keywords": ["врач", "учитель", "инженер", "электрик", "водитель"]},
-            {"text": "🤝 Коммуникабельность, легко нахожу общий язык", "keywords": ["продавец", "психолог", "учитель", "юрист"]},
-            {"text": "🔍 Внимательность к деталям", "keywords": ["аналитик", "разработчик", "юрист", "электрик"]},
-            {"text": "💡 Креативность, придумываю новое", "keywords": ["дизайн", "повар", "архитектор", "креативный продюсер"]},
-            {"text": "🧠 Логическое мышление", "keywords": ["программист", "инженер", "нейросети", "аналитика"]}
+            {"text": "💪 Ответственность и надёжность", "keywords": ["врач", "учитель", "инженер"]},
+            {"text": "🤝 Коммуникабельность", "keywords": ["психолог", "учитель", "продавец"]},
+            {"text": "🔍 Внимательность к деталям", "keywords": ["аналитик", "разработчик"]},
+            {"text": "💡 Креативность", "keywords": ["дизайнер", "архитектор"]}
         ]
     },
     {
         "id": 5,
         "text": "Какую рабочую обстановку ты предпочитаешь?",
         "options": [
-            {"text": "🏥 В офисе, больнице, школе (работа с людьми)", "keywords": ["врач", "учитель", "психолог", "юрист"]},
-            {"text": "🏗️ На улице, на объектах, в разъездах", "keywords": ["строитель", "водитель", "инженер", "электрик"]},
-            {"text": "💻 За компьютером, удалённо", "keywords": ["программист", "дизайн", "нейросети", "аналитика"]},
-            {"text": "🍳 В мастерской, на кухне, в студии", "keywords": ["повар", "парикмахер", "художник"]}
-        ]
-    },
-    {
-        "id": 6,
-        "text": "Что для тебя важно в будущей профессии?",
-        "options": [
-            {"text": "💰 Высокий доход", "keywords": ["программист", "нейросети", "юрист", "разработчик"]},
-            {"text": "❤️ Помощь людям, польза обществу", "keywords": ["врач", "учитель", "ветеринар", "психолог"]},
-            {"text": "🎨 Творческая самореализация", "keywords": ["дизайн", "повар", "парикмахер", "креативный продюсер"]},
-            {"text": "🛡️ Стабильность и надёжность", "keywords": ["учитель", "врач", "инженер", "электрик"]}
-        ]
-    },
-    {
-        "id": 7,
-        "text": "Как ты любишь решать проблемы?",
-        "options": [
-            {"text": "📚 Ищу информацию, анализирую", "keywords": ["аналитик", "юрист", "исследователь", "нейросети"]},
-            {"text": "🤔 Думаю логически, ищу алгоритм", "keywords": ["программист", "инженер", "электрик"]},
-            {"text": "💬 Обсуждаю с другими, советуюсь", "keywords": ["психолог", "учитель", "менеджер"]},
-            {"text": "🛠️ Пробую на практике, экспериментирую", "keywords": ["повар", "инженер", "строитель", "электрик"]}
-        ]
-    },
-    {
-        "id": 8,
-        "text": "Какие у тебя хобби? (Что делаешь в свободное время)",
-        "options": [
-            {"text": "🎮 Играю в компьютерные игры", "keywords": ["геймдизайнер", "разработчик", "киберспорт", "тестировщик"]},
-            {"text": "📚 Читаю книги, изучаю новое", "keywords": ["учитель", "юрист", "психолог", "исследователь"]},
-            {"text": "🎨 Рисую, фотографирую, монтирую", "keywords": ["дизайн", "креативный продюсер", "архитектор"]},
-            {"text": "🔧 Мастерю, собираю, чиню", "keywords": ["инженер", "электрик", "робототехник"]},
-            {"text": "🏃 Занимаюсь спортом", "keywords": ["учитель физкультуры", "тренер"]}
-        ]
-    },
-    {
-        "id": 9,
-        "text": "Какие профессии будущего тебе кажутся интересными?",
-        "options": [
-            {"text": "🤖 Работа с ИИ и нейросетями", "keywords": ["нейросети", "промпт-инженер", "разработчик", "ai"]},
-            {"text": "🚁 Дроны и роботы", "keywords": ["робототехник", "дроны", "оператор бпла"]},
-            {"text": "🧬 Биотехнологии и медицина", "keywords": ["биоинженер", "врач", "ветеринар"]},
-            {"text": "🌱 Экология и устойчивое развитие", "keywords": ["эколог", "биолог"]}
-        ]
-    },
-    {
-        "id": 10,
-        "text": "Кем ты видишь себя через 15 лет?",
-        "options": [
-            {"text": "👨‍🏫 Уважаемый профессионал, эксперт в своём деле", "keywords": ["врач", "учитель", "инженер", "юрист"]},
-            {"text": "🚀 Создаю инновации, работаю в новой сфере", "keywords": ["нейросети", "разработчик", "робототехник", "биоинженерия"]},
-            {"text": "👩‍🎨 Занимаюсь творчеством, создаю красоту", "keywords": ["дизайн", "архитектор", "повар", "парикмахер"]},
-            {"text": "🤝 Руковожу командой, управляю проектами", "keywords": ["менеджер", "продюсер", "директор"]}
+            {"text": "🏥 В офисе, с людьми", "keywords": ["врач", "учитель", "психолог"]},
+            {"text": "🏗️ На улице, на объектах", "keywords": ["строитель", "инженер"]},
+            {"text": "💻 За компьютером", "keywords": ["программист", "дизайнер"]},
+            {"text": "🍳 В мастерской, студии", "keywords": ["повар", "художник"]}
         ]
     }
 ]
-# =================================================
 
-# ======== ФУНКЦИЯ ПОИСКА ПРОФЕССИЙ ========
+# ======== ПОИСК ПРОФЕССИЙ ========
 def find_professions_by_keywords(user_text):
-    """Ищет профессии по ключевым словам в тексте"""
     user_text_lower = user_text.lower()
     found = []
-    
     for prof in professions:
         for keyword in prof['keywords']:
             if keyword.lower() in user_text_lower:
                 if prof not in found:
                     found.append(prof)
                 break
-    
     return found
-# ==========================================
 
-# ======== ФУНКЦИЯ ФОРМАТИРОВАНИЯ ПРОФЕССИИ ========
+# ======== ФОРМАТ ПРОФЕССИИ ========
 def format_profession(prof):
     return f"""
 🔹 *{prof['name']}*
@@ -234,12 +227,9 @@ def format_profession(prof):
 💰 *Зарплата:* {prof['salary']}
 
 ✨ {prof['trend']}
-
-🎓 *Курс:* {prof['courses'][0]}
     """
-# ==================================================
 
-# ======== КОМАНДА /START ========
+# ======== КОМАНДЫ ========
 @bot.message_handler(commands=['start'])
 def start_command(message):
     user_id = message.from_user.id
@@ -247,7 +237,6 @@ def start_command(message):
     user_mode[user_id] = 'menu'
     show_main_menu(message.chat.id)
 
-# ======== КОМАНДА /TEST ========
 @bot.message_handler(commands=['test'])
 def test_command(message):
     user_id = message.from_user.id
@@ -256,7 +245,6 @@ def test_command(message):
     bot.send_message(message.chat.id, "📋 *Начинаем тест!*", parse_mode="Markdown")
     ask_question(message.chat.id, user_id, 0)
 
-# ======== КОМАНДА /MENU ========
 @bot.message_handler(commands=['menu'])
 def menu_command(message):
     user_id = message.from_user.id
@@ -264,7 +252,6 @@ def menu_command(message):
     user_mode[user_id] = 'menu'
     show_main_menu(message.chat.id)
 
-# ======== ФУНКЦИЯ ЗАДАНИЯ ВОПРОСА ========
 def ask_question(chat_id, user_id, question_index):
     if question_index < len(questions):
         q = questions[question_index]
@@ -279,7 +266,7 @@ def ask_question(chat_id, user_id, question_index):
     else:
         show_result(chat_id, user_id)
 
-# ======== ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ ========
+# ======== ОБРАБОТКА СООБЩЕНИЙ ========
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     user_id = message.from_user.id
@@ -288,14 +275,12 @@ def handle_message(message):
     if user_id not in user_mode:
         user_mode[user_id] = 'menu'
     
-    # Кнопка "В меню"
     if user_text == "🏠 В меню":
         user_answers[user_id] = []
         user_mode[user_id] = 'menu'
         show_main_menu(message.chat.id)
         return
     
-    # Кнопки главного меню
     if user_text == "📋 ПРОЙТИ ТЕСТ":
         test_command(message)
         return
@@ -307,36 +292,35 @@ def handle_message(message):
         markup.add(telebot.types.KeyboardButton("🏠 В меню"))
         bot.send_message(message.chat.id, 
             "💬 *Режим общения с GigaChat*\n\n"
-            "Просто напиши мне о своих увлечениях, и я помогу подобрать профессию!\n\n"
+            "Просто напиши мне о своих увлечениях!\n\n"
             "Например:\n"
-            "• \"Я люблю рисовать и монтировать видео\"\n"
+            "• \"Я люблю рисовать\"\n"
             "• \"Мне нравится программировать\"\n"
-            "• \"Хочу помогать животным\"\n"
-            "• \"Интересуюсь дронами\"\n\n"
+            "• \"Хочу помогать животным\"\n\n"
             "Чтобы вернуться в меню, нажми кнопку ниже 👇",
             parse_mode="Markdown", reply_markup=markup)
         return
     
     # Режим теста
     if user_mode.get(user_id) == 'test' and user_id in user_answers:
-        answered_count = sum(1 for item in user_answers[user_id] if isinstance(item, dict) and 'keywords' in item)
+        answered = sum(1 for a in user_answers[user_id] if isinstance(a, dict) and 'keywords' in a)
         
-        if answered_count < len(questions):
-            q = questions[answered_count]
+        if answered < len(questions):
+            q = questions[answered]
             selected = None
             for opt in q['options']:
-                if opt['text'].lower() in user_text.lower() or user_text.lower() in opt['text'].lower():
+                if opt['text'].lower() in user_text.lower():
                     selected = opt
                     break
             
             if selected:
                 user_answers[user_id].append({"keywords": selected['keywords']})
-                ask_question(message.chat.id, user_id, answered_count + 1)
+                ask_question(message.chat.id, user_id, answered + 1)
             else:
-                bot.send_message(message.chat.id, "Пожалуйста, выбери один из предложенных вариантов, нажав на кнопку 👇")
+                bot.send_message(message.chat.id, "Пожалуйста, выбери вариант из кнопок 👇")
             return
     
-    # Режим GigaChat или меню
+    # Режим GigaChat
     if user_mode.get(user_id) in ['gigachat', 'menu']:
         bot.send_chat_action(message.chat.id, 'typing')
         gpt_response = ask_gigachat(user_text)
@@ -352,10 +336,9 @@ def handle_message(message):
                 bot.send_message(message.chat.id, response, parse_mode="Markdown")
             else:
                 bot.send_message(message.chat.id, 
-                    "🤔 Не нашёл подходящих профессий. Расскажи подробнее о своих увлечениях!\n\n"
-                    "Чтобы вернуться в меню, нажми /menu или кнопку '🏠 В меню'")
+                    "🤔 Не нашёл подходящих профессий. Расскажи подробнее!\n\n"
+                    "Или нажми /menu")
 
-# ======== ФУНКЦИЯ ПОКАЗА РЕЗУЛЬТАТОВ ТЕСТА ========
 def show_result(chat_id, user_id):
     markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     markup.add(telebot.types.KeyboardButton("🏠 В меню"))
@@ -382,20 +365,12 @@ def show_result(chat_id, user_id):
     for prof in top:
         bot.send_message(chat_id, format_profession(prof), parse_mode="Markdown")
     
-    bot.send_message(chat_id, 
-        "✅ *Тест пройден!*\n\n"
-        "Ты можешь:\n"
-        "• Пройти тест ещё раз — /test\n"
-        "• Пообщаться с GigaChat — просто напиши сообщение\n"
-        "• Вернуться в меню — /menu",
-        parse_mode="Markdown")
-    
+    bot.send_message(chat_id, "✅ *Готово!* Нажми /menu чтобы вернуться", parse_mode="Markdown")
     user_mode[user_id] = 'menu'
 
-# ======== ЗАПУСК БОТА ========
+# ======== ЗАПУСК ========
 if __name__ == "__main__":
     print("🚀 Бот ПрофИИ запускается...")
     print(f"✅ Загружено профессий: {len(professions)}")
-    print("✅ GigaChat настроен")
-    print("❓ Если GigaChat не работает, бот будет использовать локальную базу")
+    print("🔄 GigaChat подключен")
     bot.infinity_polling()
