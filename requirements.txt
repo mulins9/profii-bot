@@ -1,3 +1,5 @@
+requests
 pytelegrambotapi
 flask
 gunicorn
+python-dotenv
