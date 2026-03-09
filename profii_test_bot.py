@@ -1,122 +1,19 @@
 import telebot
 import json
 import random
-import requests
-import time
 import os
-import uuid
-from datetime import datetime, timedelta
+import time
+from gigachat import GigaChat
+from gigachat.models import Chat, Messages, MessagesRole
 
 # ======== НАСТРОЙКИ ========
-TELEGRAM_TOKEN = "8776463968:AAEPkERlkvBuN9WsKZ9FlqVpeOa0PET5Euc"  # Вставьте свой токен
+TELEGRAM_TOKEN = "8776463968:AAEPkERlkvBuN9WsKZ9FlqVpeOa0PET5Euc"
 
 # GigaChat настройки (ваш ключ)
-GIGACHAT_AUTH_KEY = "MDE5Y2QzZGYtNzFkMC03MjRlLTljNjMtZDQyYjFlNmI4ZjYyOmIwNGViNDk5LTY5MjktNDJhNi04ODc4LTQ5Y2M5OGMxZGMwNw=="
-GIGACHAT_SCOPE = "GIGACHAT_API_PERS"  # Обычно так
+GIGACHAT_CREDENTIALS = "MDE5Y2QzZGYtNzFkMC03MjRlLTljNjMtZDQyYjFlNmI4ZjYyOmIwNGViNDk5LTY5MjktNDJhNi04ODc4LTQ5Y2M5OGMxZGMwNw=="
 # ===========================
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-
-# Кэш для токенов GigaChat (токен живёт 30 минут)
-gigachat_token_cache = {
-    'token': None,
-    'expires_at': None
-}
-
-def get_gigachat_token():
-    """Получает access token для GigaChat API"""
-    global gigachat_token_cache
-    
-    # Проверяем, есть ли ещё живой токен в кэше
-    if gigachat_token_cache['token'] and gigachat_token_cache['expires_at'] > datetime.now():
-        return gigachat_token_cache['token']
-    
-    url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
-    
-    headers = {
-        'Authorization': f'Basic {GIGACHAT_AUTH_KEY}',
-        'RqUID': str(uuid.uuid4()),
-        'Content-Type': 'application/x-www-form-urlencoded'
-    }
-    
-    data = {'scope': GIGACHAT_SCOPE}
-    
-    try:
-        # Отключаем проверку SSL (нужно для GigaChat)
-        import ssl
-        ssl._create_default_https_context = ssl._create_unverified_context
-        
-        print("🔄 Получение токена GigaChat...")
-        response = requests.post(url, headers=headers, data=data, verify=False)
-        
-        if response.status_code == 200:
-            result = response.json()
-            token = result['access_token']
-            expires_in = result['expires_in']  # обычно 1800 секунд (30 минут)
-            
-            # Сохраняем в кэш
-            gigachat_token_cache['token'] = token
-            gigachat_token_cache['expires_at'] = datetime.now() + timedelta(seconds=expires_in - 60)  # запас 1 минута
-            
-            print("✅ Получен новый токен GigaChat")
-            return token
-        else:
-            print(f"❌ Ошибка получения токена: {response.status_code}")
-            print(f"Текст ошибки: {response.text}")
-            return None
-    except Exception as e:
-        print(f"❌ Исключение при получении токена: {e}")
-        return None
-
-def ask_gigachat(user_message):
-    """Отправляет запрос к GigaChat и возвращает ответ"""
-    
-    # Получаем токен
-    token = get_gigachat_token()
-    if not token:
-        return None
-    
-    url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
-    
-    headers = {
-        'Authorization': f'Bearer {token}',
-        'Content-Type': 'application/json'
-    }
-    
-    # Системный промпт для GigaChat
-    system_prompt = """Ты — дружелюбный помощник по профориентации для подростков 12-15 лет по имени ПрофИИ.
-Твоя задача — в непринужденной беседе выяснить интересы ребенка и предложить подходящие современные профессии.
-Общайся на понятном языке, используй эмодзи, будь позитивным.
-Задавай уточняющие вопросы, если нужно.
-В конце предложи 2-3 профессии из списка: разработчик нейросетей, промпт-инженер, геймдизайнер, UX-дизайнер, робототехник, оператор дронов, биоинженер, специалист по кибербезопасности, врач, учитель, инженер, психолог."""
-    
-    payload = {
-        "model": "GigaChat",  # Можно также "GigaChat-Pro" или "GigaChat-Lite"
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
-        ],
-        "temperature": 0.7,
-        "max_tokens": 1024,
-        "repetition_penalty": 1.1
-    }
-    
-    try:
-        print(f"🔄 Отправка запроса к GigaChat...")
-        response = requests.post(url, headers=headers, json=payload, verify=False)
-        
-        if response.status_code == 200:
-            result = response.json()
-            message_text = result['choices'][0]['message']['content']
-            print(f"✅ Ответ получен от GigaChat")
-            return message_text
-        else:
-            print(f"❌ Ошибка GigaChat API: {response.status_code}")
-            print(f"Текст ошибки: {response.text}")
-            return None
-    except Exception as e:
-        print(f"❌ Исключение при запросе к GigaChat: {e}")
-        return None
 
 # ======== ЗАГРУЗКА ПРОФЕССИЙ ========
 def load_professions():
@@ -132,22 +29,59 @@ def load_professions():
 professions = load_professions()
 # ====================================
 
-# ======== ХРАНИЛИЩА СОСТОЯНИЙ ========
-# Хранилище ответов пользователей для теста
-user_answers = {}
-# Хранилище текущего режима пользователя
-user_mode = {}
-# ======================================
+# Хранилища состояний пользователей
+user_answers = {}  # для ответов на тест
+user_mode = {}     # для режима: 'menu', 'test', 'gigachat'
+
+# ======== ФУНКЦИЯ ЗАПРОСА К GIGACHAT ========
+def ask_gigachat(user_message):
+    """Отправляет запрос к GigaChat и возвращает ответ"""
+    try:
+        print("🔄 Подключение к GigaChat...")
+        
+        # Создаём клиента с отключённой проверкой SSL
+        with GigaChat(
+            credentials=GIGACHAT_CREDENTIALS,
+            verify_ssl_certs=False,
+            timeout=60,
+            model="GigaChat"
+        ) as client:
+            
+            # Системный промпт
+            system_prompt = """Ты — дружелюбный помощник по профориентации для подростков 12-15 лет по имени ПрофИИ.
+Твоя задача — в непринужденной беседе выяснить интересы ребенка и предложить подходящие современные профессии.
+Общайся на понятном языке, используй эмодзи, будь позитивным.
+Задавай уточняющие вопросы, если нужно.
+В конце предложи 2-3 профессии из списка: разработчик нейросетей, промпт-инженер, геймдизайнер, UX-дизайнер, робототехник, оператор дронов, биоинженер, специалист по кибербезопасности, врач, учитель, инженер, психолог."""
+            
+            # Формируем сообщения
+            messages = [
+                Messages(role=MessagesRole.SYSTEM, content=system_prompt),
+                Messages(role=MessagesRole.USER, content=user_message)
+            ]
+            
+            # Отправляем запрос
+            response = client.chat(messages)
+            
+            if response and response.choices:
+                answer = response.choices[0].message.content
+                print(f"✅ Получен ответ от GigaChat")
+                return answer
+            else:
+                print("❌ Пустой ответ от GigaChat")
+                return None
+                
+    except Exception as e:
+        print(f"❌ Ошибка GigaChat: {e}")
+        return None
+# ============================================
 
 # ======== ФУНКЦИЯ ГЛАВНОГО МЕНЮ ========
 def show_main_menu(chat_id):
     """Показывает главное меню с двумя кнопками"""
     markup = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    
-    # Создаём две большие кнопки
     btn1 = telebot.types.KeyboardButton("📋 ПРОЙТИ ТЕСТ")
     btn2 = telebot.types.KeyboardButton("💬 ОБЩЕНИЕ С GigaChat")
-    
     markup.add(btn1, btn2)
     
     welcome_text = """
@@ -161,7 +95,6 @@ def show_main_menu(chat_id):
 
 *Попробуй прямо сейчас!* 👇
     """
-    
     bot.send_message(chat_id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 # ========================================
 
@@ -310,30 +243,25 @@ def format_profession(prof):
 @bot.message_handler(commands=['start'])
 def start_command(message):
     user_id = message.from_user.id
-    user_answers[user_id] = []  # Очищаем состояние теста
-    user_mode[user_id] = 'menu'  # Устанавливаем режим меню
-    
-    # Показываем главное меню
+    user_answers[user_id] = []
+    user_mode[user_id] = 'menu'
     show_main_menu(message.chat.id)
 
 # ======== КОМАНДА /TEST ========
 @bot.message_handler(commands=['test'])
 def test_command(message):
     user_id = message.from_user.id
-    # Полностью очищаем предыдущие ответы
     user_answers[user_id] = []
-    user_mode[user_id] = 'test'  # Устанавливаем режим теста
-    
+    user_mode[user_id] = 'test'
     bot.send_message(message.chat.id, "📋 *Начинаем тест!*", parse_mode="Markdown")
     ask_question(message.chat.id, user_id, 0)
 
 # ======== КОМАНДА /MENU ========
 @bot.message_handler(commands=['menu'])
 def menu_command(message):
-    """Возвращает в главное меню"""
     user_id = message.from_user.id
-    user_answers[user_id] = []  # Очищаем состояние теста
-    user_mode[user_id] = 'menu'  # Устанавливаем режим меню
+    user_answers[user_id] = []
+    user_mode[user_id] = 'menu'
     show_main_menu(message.chat.id)
 
 # ======== ФУНКЦИЯ ЗАДАНИЯ ВОПРОСА ========
@@ -342,18 +270,13 @@ def ask_question(chat_id, user_id, question_index):
         q = questions[question_index]
         text = f"*Вопрос {question_index + 1} из {len(questions)}*\n\n{q['text']}"
         
-        # СОЗДАЁМ КЛАВИАТУРУ С КНОПКАМИ
         markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
         for opt in q['options']:
             markup.add(telebot.types.KeyboardButton(opt['text']))
-        
-        # Добавляем кнопку возврата в меню
         markup.add(telebot.types.KeyboardButton("🏠 В меню"))
         
-        # Отправляем сообщение с клавиатурой
         bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
     else:
-        # Вопросы закончились - показываем результат
         show_result(chat_id, user_id)
 
 # ======== ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ ========
@@ -362,30 +285,26 @@ def handle_message(message):
     user_id = message.from_user.id
     user_text = message.text
     
-    # Инициализируем режим пользователя, если его нет
     if user_id not in user_mode:
         user_mode[user_id] = 'menu'
     
-    # Обработка кнопки "В меню"
+    # Кнопка "В меню"
     if user_text == "🏠 В меню":
-        user_answers[user_id] = []  # Очищаем состояние теста
-        user_mode[user_id] = 'menu'  # Устанавливаем режим меню
+        user_answers[user_id] = []
+        user_mode[user_id] = 'menu'
         show_main_menu(message.chat.id)
         return
     
-    # Обработка кнопок главного меню
+    # Кнопки главного меню
     if user_text == "📋 ПРОЙТИ ТЕСТ":
         test_command(message)
         return
     
     if user_text == "💬 ОБЩЕНИЕ С GigaChat":
-        # Переходим в режим общения с GigaChat
-        user_answers[user_id] = []  # Очищаем состояние теста
-        user_mode[user_id] = 'gigachat'  # Устанавливаем режим GigaChat
-        
+        user_answers[user_id] = []
+        user_mode[user_id] = 'gigachat'
         markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
         markup.add(telebot.types.KeyboardButton("🏠 В меню"))
-        
         bot.send_message(message.chat.id, 
             "💬 *Режим общения с GigaChat*\n\n"
             "Просто напиши мне о своих увлечениях, и я помогу подобрать профессию!\n\n"
@@ -398,55 +317,38 @@ def handle_message(message):
             parse_mode="Markdown", reply_markup=markup)
         return
     
-    # Проверяем, находится ли пользователь в режиме теста
+    # Режим теста
     if user_mode.get(user_id) == 'test' and user_id in user_answers:
-        # Считаем, сколько ответов уже дано
-        answered_count = 0
-        for item in user_answers[user_id]:
-            if isinstance(item, dict) and 'keywords' in item:
-                answered_count += 1
+        answered_count = sum(1 for item in user_answers[user_id] if isinstance(item, dict) and 'keywords' in item)
         
-        # Если тест ещё не завершён
         if answered_count < len(questions):
-            # Получаем текущий вопрос
-            current_q_index = answered_count
-            if current_q_index < len(questions):
-                q = questions[current_q_index]
-                
-                # Проверяем, есть ли текст ответа среди вариантов
-                selected = None
-                for opt in q['options']:
-                    if opt['text'].lower() in user_text.lower() or user_text.lower() in opt['text'].lower():
-                        selected = opt
-                        break
-                
-                if selected:
-                    # Сохраняем ответ с ключевыми словами
-                    user_answers[user_id].append({"keywords": selected['keywords']})
-                    # Задаём следующий вопрос
-                    ask_question(message.chat.id, user_id, answered_count + 1)
-                else:
-                    bot.send_message(message.chat.id, 
-                        "Пожалуйста, выбери один из предложенных вариантов, нажав на кнопку 👇")
-                return
+            q = questions[answered_count]
+            selected = None
+            for opt in q['options']:
+                if opt['text'].lower() in user_text.lower() or user_text.lower() in opt['text'].lower():
+                    selected = opt
+                    break
+            
+            if selected:
+                user_answers[user_id].append({"keywords": selected['keywords']})
+                ask_question(message.chat.id, user_id, answered_count + 1)
+            else:
+                bot.send_message(message.chat.id, "Пожалуйста, выбери один из предложенных вариантов, нажав на кнопку 👇")
+            return
     
-    # Если пользователь в режиме GigaChat или меню (не в тесте) — используем GigaChat
+    # Режим GigaChat или меню
     if user_mode.get(user_id) in ['gigachat', 'menu']:
         bot.send_chat_action(message.chat.id, 'typing')
-        
-        # Пробуем получить ответ от GigaChat
         gpt_response = ask_gigachat(user_text)
         
         if gpt_response:
             bot.send_message(message.chat.id, gpt_response)
         else:
-            # Если GigaChat не работает, ищем в локальной базе
             found = find_professions_by_keywords(user_text)
             if found:
                 response = "🔍 *Нашёл в локальной базе:*\n\n"
                 for prof in found[:3]:
-                    response += format_profession(prof)
-                    response += "\n" + "—" * 30 + "\n"
+                    response += format_profession(prof) + "\n" + "—" * 30 + "\n"
                 bot.send_message(message.chat.id, response, parse_mode="Markdown")
             else:
                 bot.send_message(message.chat.id, 
@@ -455,33 +357,27 @@ def handle_message(message):
 
 # ======== ФУНКЦИЯ ПОКАЗА РЕЗУЛЬТАТОВ ТЕСТА ========
 def show_result(chat_id, user_id):
-    # Убираем клавиатуру
     markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     markup.add(telebot.types.KeyboardButton("🏠 В меню"))
     
     bot.send_message(chat_id, "🔍 *Анализирую твои ответы...*", parse_mode="Markdown", reply_markup=markup)
     
-    # Собираем ключевые слова из ответов
     answers = user_answers.get(user_id, [])
     all_keywords = []
     for a in answers:
         if isinstance(a, dict) and 'keywords' in a:
             all_keywords.extend(a['keywords'])
     
-    # Считаем баллы для профессий
     scores = []
     for prof in professions:
-        score = 0
-        for kw in all_keywords:
-            if kw.lower() in [k.lower() for k in prof['keywords']]:
-                score += 1
+        score = sum(1 for kw in all_keywords if kw.lower() in [k.lower() for k in prof['keywords']])
         scores.append((prof, score))
     
     scores.sort(key=lambda x: x[1], reverse=True)
     top = [prof for prof, score in scores[:3] if score > 0]
     
     if not top:
-        top = random.sample(professions, 3)
+        top = random.sample(professions, min(3, len(professions)))
     
     for prof in top:
         bot.send_message(chat_id, format_profession(prof), parse_mode="Markdown")
@@ -494,7 +390,6 @@ def show_result(chat_id, user_id):
         "• Вернуться в меню — /menu",
         parse_mode="Markdown")
     
-    # После завершения теста возвращаем в меню
     user_mode[user_id] = 'menu'
 
 # ======== ЗАПУСК БОТА ========
@@ -502,4 +397,5 @@ if __name__ == "__main__":
     print("🚀 Бот ПрофИИ запускается...")
     print(f"✅ Загружено профессий: {len(professions)}")
     print("✅ GigaChat настроен")
+    print("❓ Если GigaChat не работает, бот будет использовать локальную базу")
     bot.infinity_polling()
