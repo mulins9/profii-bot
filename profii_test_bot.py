@@ -264,9 +264,10 @@ def start_command(message):
 @bot.message_handler(commands=['test'])
 def test_command(message):
     user_id = message.from_user.id
+    # Полностью очищаем предыдущие ответы
     user_answers[user_id] = []
     
-    bot.send_message(message.chat.id, "📋 *Прохождение теста*", parse_mode="Markdown")
+    bot.send_message(message.chat.id, "📋 *Начинаем тест!*", parse_mode="Markdown")
     ask_question(message.chat.id, user_id, 0)
 
 def ask_question(chat_id, user_id, question_index):
@@ -274,44 +275,62 @@ def ask_question(chat_id, user_id, question_index):
         q = questions[question_index]
         text = f"*Вопрос {question_index + 1} из {len(questions)}*\n\n{q['text']}"
         
-        # СОЗДАЁМ КЛАВИАТУРУ
+        # СОЗДАЁМ КЛАВИАТУРУ С КНОПКАМИ
         markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
         for opt in q['options']:
             markup.add(telebot.types.KeyboardButton(opt['text']))
         
-        # ОТПРАВЛЯЕМ С КЛАВИАТУРОЙ
+        # Отправляем сообщение с клавиатурой
         bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
-        
-        user_answers[user_id].append({"question_index": question_index})
     else:
+        # Вопросы закончились - показываем результат
         show_result(chat_id, user_id)
+# ======== ОБРАБОТКА СООБЩЕНИЙ ========
+@bot.message_handler(func=lambda message: True)
 # ======== ОБРАБОТКА СООБЩЕНИЙ ========
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     user_id = message.from_user.id
     user_text = message.text
     
-    # Проверяем, идёт ли тест
-    if user_id in user_answers and len(user_answers[user_id]) <= len(questions):
-        answered = len([a for a in user_answers[user_id] if 'keywords' in a])
+    # Проверяем, является ли сообщение командой
+    if user_text.startswith('/'):
+        # Команды обрабатываются отдельными хэндлерами
+        return
+    
+    # Проверяем, находится ли пользователь в режиме теста
+    if user_id in user_answers:
+        # Считаем, сколько ответов уже дано
+        answered_count = 0
+        for item in user_answers[user_id]:
+            if isinstance(item, dict) and 'keywords' in item:
+                answered_count += 1
         
-        if answered < len(questions):
-            q = questions[answered]
-            selected = None
-            for opt in q['options']:
-                if opt['text'].lower() in user_text.lower():
-                    selected = opt
-                    break
-            
-            if selected:
-                user_answers[user_id].append({"keywords": selected['keywords']})
-                ask_question(message.chat.id, user_id, answered + 1)
-                return
-            else:
-                bot.send_message(message.chat.id, "Пожалуйста, выбери вариант из кнопок 👇")
+        # Если тест ещё не завершён
+        if answered_count < len(questions):
+            # Получаем текущий вопрос
+            current_q_index = answered_count
+            if current_q_index < len(questions):
+                q = questions[current_q_index]
+                
+                # Проверяем, есть ли текст ответа среди вариантов
+                selected = None
+                for opt in q['options']:
+                    if opt['text'].lower() in user_text.lower() or user_text.lower() in opt['text'].lower():
+                        selected = opt
+                        break
+                
+                if selected:
+                    # Сохраняем ответ с ключевыми словами
+                    user_answers[user_id].append({"keywords": selected['keywords']})
+                    # Задаём следующий вопрос
+                    ask_question(message.chat.id, user_id, answered_count + 1)
+                else:
+                    bot.send_message(message.chat.id, 
+                        "Пожалуйста, выбери один из предложенных вариантов, нажав на кнопку 👇")
                 return
     
-    # Если не тест — используем Yandex GPT
+    # Если пользователь НЕ в режиме теста — используем Yandex GPT
     bot.send_chat_action(message.chat.id, 'typing')
     
     # Пробуем получить ответ от Yandex GPT
@@ -332,7 +351,6 @@ def handle_message(message):
             bot.send_message(message.chat.id, 
                 "🤔 Не нашёл подходящих профессий. Расскажи подробнее о своих увлечениях!\n\n"
                 "Или попробуй пройти тест: /test")
-
 def show_result(chat_id, user_id):
     markup = telebot.types.ReplyKeyboardRemove()
     bot.send_message(chat_id, "🔍 *Анализирую твои ответы...*", parse_mode="Markdown", reply_markup=markup)
@@ -371,5 +389,6 @@ if __name__ == "__main__":
     print("✅ Yandex GPT " + ("настроен" if YANDEX_API_KEY != "ВАШ_API_КЛЮЧ_ОТ_YANDEX_CLOUD" else "НЕ настроен"))
     bot.infinity_polling()
     bot.infinity_polling()
+
 
 
