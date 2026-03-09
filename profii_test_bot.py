@@ -132,6 +132,13 @@ def load_professions():
 professions = load_professions()
 # ====================================
 
+# ======== ХРАНИЛИЩА СОСТОЯНИЙ ========
+# Хранилище ответов пользователей для теста
+user_answers = {}
+# Хранилище текущего режима пользователя
+user_mode = {}
+# ======================================
+
 # ======== ФУНКЦИЯ ГЛАВНОГО МЕНЮ ========
 def show_main_menu(chat_id):
     """Показывает главное меню с двумя кнопками"""
@@ -266,9 +273,6 @@ questions = [
 ]
 # =================================================
 
-# Хранилище ответов пользователей
-user_answers = {}
-
 # ======== ФУНКЦИЯ ПОИСКА ПРОФЕССИЙ ========
 def find_professions_by_keywords(user_text):
     """Ищет профессии по ключевым словам в тексте"""
@@ -307,6 +311,7 @@ def format_profession(prof):
 def start_command(message):
     user_id = message.from_user.id
     user_answers[user_id] = []  # Очищаем состояние теста
+    user_mode[user_id] = 'menu'  # Устанавливаем режим меню
     
     # Показываем главное меню
     show_main_menu(message.chat.id)
@@ -317,6 +322,7 @@ def test_command(message):
     user_id = message.from_user.id
     # Полностью очищаем предыдущие ответы
     user_answers[user_id] = []
+    user_mode[user_id] = 'test'  # Устанавливаем режим теста
     
     bot.send_message(message.chat.id, "📋 *Начинаем тест!*", parse_mode="Markdown")
     ask_question(message.chat.id, user_id, 0)
@@ -327,6 +333,7 @@ def menu_command(message):
     """Возвращает в главное меню"""
     user_id = message.from_user.id
     user_answers[user_id] = []  # Очищаем состояние теста
+    user_mode[user_id] = 'menu'  # Устанавливаем режим меню
     show_main_menu(message.chat.id)
 
 # ======== ФУНКЦИЯ ЗАДАНИЯ ВОПРОСА ========
@@ -355,9 +362,14 @@ def handle_message(message):
     user_id = message.from_user.id
     user_text = message.text
     
+    # Инициализируем режим пользователя, если его нет
+    if user_id not in user_mode:
+        user_mode[user_id] = 'menu'
+    
     # Обработка кнопки "В меню"
     if user_text == "🏠 В меню":
         user_answers[user_id] = []  # Очищаем состояние теста
+        user_mode[user_id] = 'menu'  # Устанавливаем режим меню
         show_main_menu(message.chat.id)
         return
     
@@ -369,6 +381,8 @@ def handle_message(message):
     if user_text == "💬 ОБЩЕНИЕ С GigaChat":
         # Переходим в режим общения с GigaChat
         user_answers[user_id] = []  # Очищаем состояние теста
+        user_mode[user_id] = 'gigachat'  # Устанавливаем режим GigaChat
+        
         markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
         markup.add(telebot.types.KeyboardButton("🏠 В меню"))
         
@@ -385,7 +399,7 @@ def handle_message(message):
         return
     
     # Проверяем, находится ли пользователь в режиме теста
-    if user_id in user_answers:
+    if user_mode.get(user_id) == 'test' and user_id in user_answers:
         # Считаем, сколько ответов уже дано
         answered_count = 0
         for item in user_answers[user_id]:
@@ -416,27 +430,28 @@ def handle_message(message):
                         "Пожалуйста, выбери один из предложенных вариантов, нажав на кнопку 👇")
                 return
     
-    # Если пользователь НЕ в режиме теста — используем GigaChat
-    bot.send_chat_action(message.chat.id, 'typing')
-    
-    # Пробуем получить ответ от GigaChat
-    gpt_response = ask_gigachat(user_text)
-    
-    if gpt_response:
-        bot.send_message(message.chat.id, gpt_response)
-    else:
-        # Если GigaChat не работает, ищем в локальной базе
-        found = find_professions_by_keywords(user_text)
-        if found:
-            response = "🔍 *Нашёл в локальной базе:*\n\n"
-            for prof in found[:3]:
-                response += format_profession(prof)
-                response += "\n" + "—" * 30 + "\n"
-            bot.send_message(message.chat.id, response, parse_mode="Markdown")
+    # Если пользователь в режиме GigaChat или меню (не в тесте) — используем GigaChat
+    if user_mode.get(user_id) in ['gigachat', 'menu']:
+        bot.send_chat_action(message.chat.id, 'typing')
+        
+        # Пробуем получить ответ от GigaChat
+        gpt_response = ask_gigachat(user_text)
+        
+        if gpt_response:
+            bot.send_message(message.chat.id, gpt_response)
         else:
-            bot.send_message(message.chat.id, 
-                "🤔 Не нашёл подходящих профессий. Расскажи подробнее о своих увлечениях!\n\n"
-                "Чтобы вернуться в меню, нажми /menu")
+            # Если GigaChat не работает, ищем в локальной базе
+            found = find_professions_by_keywords(user_text)
+            if found:
+                response = "🔍 *Нашёл в локальной базе:*\n\n"
+                for prof in found[:3]:
+                    response += format_profession(prof)
+                    response += "\n" + "—" * 30 + "\n"
+                bot.send_message(message.chat.id, response, parse_mode="Markdown")
+            else:
+                bot.send_message(message.chat.id, 
+                    "🤔 Не нашёл подходящих профессий. Расскажи подробнее о своих увлечениях!\n\n"
+                    "Чтобы вернуться в меню, нажми /menu или кнопку '🏠 В меню'")
 
 # ======== ФУНКЦИЯ ПОКАЗА РЕЗУЛЬТАТОВ ТЕСТА ========
 def show_result(chat_id, user_id):
@@ -478,6 +493,9 @@ def show_result(chat_id, user_id):
         "• Пообщаться с GigaChat — просто напиши сообщение\n"
         "• Вернуться в меню — /menu",
         parse_mode="Markdown")
+    
+    # После завершения теста возвращаем в меню
+    user_mode[user_id] = 'menu'
 
 # ======== ЗАПУСК БОТА ========
 if __name__ == "__main__":
