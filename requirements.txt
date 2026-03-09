@@ -1,4 +1,5 @@
 pytelegrambotapi
 requests
+gigachat
 flask
 gunicorn
