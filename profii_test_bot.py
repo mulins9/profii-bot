@@ -1,20 +1,17 @@
 import telebot
 import json
 import random
+import requests
+import time
 import os
 
-# ВНИЗУ файла, после всего кода, но перед bot.infinity_polling()
-# Замените старый запуск (bot.infinity_polling()) на ЭТО:
-
-if __name__ == "__main__":
-    # Эта часть не будет выполняться на Render
-    # На Render бот запускается через app.py
-    print("🤖 Бот запускается локально...")
-    bot.infinity_polling()
-
-
 # ======== НАСТРОЙКИ ========
-TELEGRAM_TOKEN = "8776463968:AAEPkERlkvBuN9WsKZ9FlqVpeOa0PET5Euc"  # ВСТАВЬТЕ СВОЙ ТОКЕН
+TELEGRAM_TOKEN = "ВАШ_ТОКЕН_ОТ_BOTFATHER"  # Вставьте свой токен
+
+# Yandex GPT настройки (нужно заполнить!)
+YANDEX_API_KEY = "ВАШ_API_КЛЮЧ_ОТ_YANDEX_CLOUD"  # Вставьте API-ключ
+YANDEX_FOLDER_ID = "ВАШ_FOLDER_ID"  # Вставьте ID папки
+YANDEX_GPT_MODEL = "yandexgpt-lite"  # Можно использовать "yandexgpt" для более мощной версии
 # ===========================
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
@@ -32,6 +29,67 @@ def load_professions():
 
 professions = load_professions()
 # ====================================
+
+# ======== ФУНКЦИЯ ЗАПРОСА К YANDEX GPT ========
+def ask_yandex_gpt(user_message):
+    """Отправляет запрос к Yandex GPT и возвращает ответ"""
+    
+    # Проверяем, заполнены ли ключи
+    if YANDEX_API_KEY == "ВАШ_API_КЛЮЧ_ОТ_YANDEX_CLOUD" or YANDEX_FOLDER_ID == "ВАШ_FOLDER_ID":
+        return "⚠️ Yandex GPT не настроен. Использую локальную базу профессий."
+    
+    url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+    
+    # Системный промпт для GPT
+    system_prompt = """Ты — дружелюбный помощник по профориентации для подростков 12-15 лет по имени ПрофИИ.
+Твоя задача — в непринужденной беседе выяснить интересы ребенка и предложить подходящие современные профессии.
+Общайся на понятном языке, используй эмодзи, будь позитивным.
+Задавай уточняющие вопросы, если нужно.
+В конце предложи 2-3 профессии из списка: разработчик нейросетей, промпт-инженер, геймдизайнер, UX-дизайнер, робототехник, оператор дронов, биоинженер, специалист по кибербезопасности, врач, учитель, инженер, психолог."""
+    
+    # Подготавливаем данные для запроса
+    prompt_data = {
+        "modelUri": f"gpt://{YANDEX_FOLDER_ID}/{YANDEX_GPT_MODEL}",
+        "completionOptions": {
+            "stream": False,
+            "temperature": 0.6,
+            "maxTokens": 2000
+        },
+        "messages": [
+            {
+                "role": "system",
+                "text": system_prompt
+            },
+            {
+                "role": "user",
+                "text": user_message
+            }
+        ]
+    }
+    
+    # Отправляем запрос
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Api-Key {YANDEX_API_KEY}"
+    }
+    
+    try:
+        print(f"🔄 Отправка запроса к Yandex GPT...")
+        response = requests.post(url, headers=headers, json=prompt_data)
+        
+        if response.status_code == 200:
+            result = response.json()
+            message_text = result['result']['alternatives'][0]['message']['text']
+            print(f"✅ Ответ получен от Yandex GPT")
+            return message_text
+        else:
+            print(f"❌ Ошибка API: {response.status_code}")
+            print(f"Текст ошибки: {response.text}")
+            return None
+    except Exception as e:
+        print(f"❌ Исключение при запросе к Yandex GPT: {e}")
+        return None
+# ===============================================
 
 # ======== РАСШИРЕННЫЙ ТЕСТ (10 ВОПРОСОВ) ========
 questions = [
@@ -142,79 +200,25 @@ questions = [
 # =================================================
 
 
-# Хранилище ответов пользователей (временное)
+
+# Хранилище ответов пользователей
 user_answers = {}
 
-# ======== ФУНКЦИЯ ПОДСЧЕТА РЕЗУЛЬТАТОВ ========
-# ======== УЛУЧШЕННАЯ ФУНКЦИЯ ПОДСЧЕТА РЕЗУЛЬТАТОВ ========
-def calculate_result(user_id):
-    """Анализирует ответы пользователя и подбирает профессии с весовыми коэффициентами"""
+# ======== ФУНКЦИЯ ПОИСКА ПРОФЕССИЙ ========
+def find_professions_by_keywords(user_text):
+    """Ищет профессии по ключевым словам в тексте"""
+    user_text_lower = user_text.lower()
+    found = []
     
-    # Получаем все ответы пользователя
-    answers = user_answers.get(user_id, [])
-    
-    if len(answers) < len(questions):
-        return random.sample(professions, min(3, len(professions)))
-    
-    # Собираем все ключевые слова из ответов
-    all_keywords = []
-    for answer in answers:
-        if isinstance(answer, dict) and 'keywords' in answer:
-            all_keywords.extend(answer['keywords'])
-    
-    print(f"📊 Ключевые слова пользователя: {all_keywords}")
-    
-    # Словарь для подсчета баллов по профессиям
-    profession_scores = {}
-    
-    # Для каждой профессии считаем баллы
     for prof in professions:
-        score = 0
-        prof_keywords = [kw.lower() for kw in prof['keywords']]
-        
-        for keyword in all_keywords:
-            keyword_lower = keyword.lower()
-            if keyword_lower in prof_keywords:
-                score += 2  # Прямое совпадение даёт 2 балла
-            else:
-                # Проверяем частичные совпадения (например, "программист" и "программирование")
-                for prof_kw in prof_keywords:
-                    if keyword_lower in prof_kw or prof_kw in keyword_lower:
-                        score += 1
-                        break
-        
-        # Дополнительные баллы за особые комбинации (можно настроить под свои профессии)
-        
-        profession_scores[prof['name']] = {
-            'profession': prof,
-            'score': score
-        }
+        for keyword in prof['keywords']:
+            if keyword.lower() in user_text_lower:
+                if prof not in found:
+                    found.append(prof)
+                break
     
-    # Сортируем по баллам
-    sorted_professions = sorted(
-        profession_scores.values(), 
-        key=lambda x: x['score'], 
-        reverse=True
-    )
-    
-    # Отладочный вывод топ-5 профессий
-    print("🏆 Топ-5 профессий по баллам:")
-    for i, item in enumerate(sorted_professions[:5]):
-        print(f"   {i+1}. {item['profession']['name']}: {item['score']} баллов")
-    
-    # Берём топ-3 профессии
-    top_professions = [item['profession'] for item in sorted_professions[:3]]
-    
-    # Если баллы слишком низкие, добавляем случайные
-    if all(item['score'] < 3 for item in sorted_professions[:3]):
-        print("⚠️ Баллы низкие, добавляем случайные профессии")
-        random_profs = random.sample(professions, 2)
-        top_professions = top_professions + random_profs
-        top_professions = list({p['name']: p for p in top_professions}.values())[:3]
-    
-    return top_professions
-# ========================================================
-
+    return found
+# ==========================================
 
 # ======== ФУНКЦИЯ ФОРМАТИРОВАНИЯ ПРОФЕССИИ ========
 def format_profession(prof):
@@ -223,122 +227,145 @@ def format_profession(prof):
 
 {prof['description']}
 
-📚 *Школьные предметы:* {', '.join(prof['school_subjects'])}
+📚 *Предметы:* {', '.join(prof['school_subjects'])}
 🔧 *Навыки:* {', '.join(prof['skills'])}
 💰 *Зарплата:* {prof['salary']}
 
 ✨ {prof['trend']}
 
-🎓 *Где учиться:* {prof['courses'][0]}
+🎓 *Курс:* {prof['courses'][0]}
     """
 # ==================================================
 
 # ======== КОМАНДА /START ========
 @bot.message_handler(commands=['start'])
-def start_test(message):
+def start_command(message):
     user_id = message.from_user.id
-    user_answers[user_id] = []  # Очищаем старые ответы
+    user_answers[user_id] = []
     
-    welcome_text = """
-🚀 *Привет! Я ПрофИИ — твой персональный навигатор в мире профессий!*
+    welcome = """
+🚀 *Привет! Я ПрофИИ — твой навигатор в мире профессий!*
 
-Я проведу для тебя небольшой тест из 5 вопросов и на основе твоих ответов подберу профессии будущего, которые тебе подойдут.
+Я использую **Yandex GPT** (искусственный интеллект) и базу из 30+ профессий, чтобы помочь тебе найти своё призвание.
 
-Готов? Поехали! 🎯
+Напиши мне о своих увлечениях, и я предложу подходящие профессии!
+
+Например:
+• "Люблю играть в игры"
+• "Интересуюсь нейросетями"
+• "Хочу помогать людям"
+• "Нравится рисовать"
+
+Или нажми /test, чтобы пройти тест.
     """
+    bot.send_message(message.chat.id, welcome, parse_mode="Markdown")
+
+# ======== КОМАНДА /TEST ========
+@bot.message_handler(commands=['test'])
+def test_command(message):
+    user_id = message.from_user.id
+    user_answers[user_id] = []
     
-    bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown")
-    
-    # Задаем первый вопрос
+    bot.send_message(message.chat.id, "📋 *Прохождение теста*", parse_mode="Markdown")
     ask_question(message.chat.id, user_id, 0)
 
-# ======== ФУНКЦИЯ ЗАДАНИЯ ВОПРОСА ========
 def ask_question(chat_id, user_id, question_index):
     if question_index < len(questions):
-        question = questions[question_index]
+        q = questions[question_index]
+        text = f"*Вопрос {question_index + 1} из {len(questions)}*\n\n{q['text']}"
         
-        # Формируем текст вопроса
-        text = f"*Вопрос {question_index + 1} из {len(questions)}*\n\n{question['text']}"
-        
-        # Создаем клавиатуру с вариантами ответов
         markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-        
-        for option in question['options']:
-            button = telebot.types.KeyboardButton(option['text'])
-            markup.add(button)
+        for opt in q['options']:
+            markup.add(telebot.types.KeyboardButton(opt['text']))
         
         bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
-        
-        # Сохраняем индекс текущего вопроса для пользователя
         user_answers[user_id].append({"question_index": question_index})
     else:
-        # Вопросы закончились - показываем результат
         show_result(chat_id, user_id)
 
-# ======== ОБРАБОТКА ОТВЕТОВ ========
+# ======== ОБРАБОТКА СООБЩЕНИЙ ========
 @bot.message_handler(func=lambda message: True)
-def handle_answer(message):
+def handle_message(message):
     user_id = message.from_user.id
     user_text = message.text
     
-    # Проверяем, есть ли пользователь в хранилище
-    if user_id not in user_answers:
-        bot.send_message(message.chat.id, "Напиши /start чтобы начать тест заново")
-        return
-    
-    # Определяем, на какой вопрос отвечают
-    user_data = user_answers[user_id]
-    answered_questions = len([a for a in user_data if isinstance(a, dict) and 'keywords' in a])
-    current_question_index = answered_questions
-    
-    if current_question_index >= len(questions):
-        show_result(message.chat.id, user_id)
-        return
-    
-    # Ищем выбранный вариант в текущем вопросе
-    question = questions[current_question_index]
-    selected_option = None
-    
-    for option in question['options']:
-        if option['text'].lower() in user_text.lower() or user_text.lower() in option['text'].lower():
-            selected_option = option
-            break
-    
-    if selected_option:
-        # Сохраняем ответ с ключевыми словами
-        user_answers[user_id].append({
-            "question_index": current_question_index,
-            "keywords": selected_option['keywords']
-        })
+    # Проверяем, идёт ли тест
+    if user_id in user_answers and len(user_answers[user_id]) <= len(questions):
+        answered = len([a for a in user_answers[user_id] if 'keywords' in a])
         
-        # Задаем следующий вопрос
-        ask_question(message.chat.id, user_id, answered_questions + 1)
-    else:
-        bot.send_message(message.chat.id, "Пожалуйста, выбери один из вариантов ответа 👇")
-
-# ======== ПОКАЗ РЕЗУЛЬТАТА ========
-def show_result(chat_id, user_id):
-    # Убираем клавиатуру
-    markup = telebot.types.ReplyKeyboardRemove()
+        if answered < len(questions):
+            q = questions[answered]
+            selected = None
+            for opt in q['options']:
+                if opt['text'].lower() in user_text.lower():
+                    selected = opt
+                    break
+            
+            if selected:
+                user_answers[user_id].append({"keywords": selected['keywords']})
+                ask_question(message.chat.id, user_id, answered + 1)
+                return
+            else:
+                bot.send_message(message.chat.id, "Пожалуйста, выбери вариант из кнопок 👇")
+                return
     
+    # Если не тест — используем Yandex GPT
+    bot.send_chat_action(message.chat.id, 'typing')
+    
+    # Пробуем получить ответ от Yandex GPT
+    gpt_response = ask_yandex_gpt(user_text)
+    
+    if gpt_response:
+        bot.send_message(message.chat.id, gpt_response)
+    else:
+        # Если GPT не работает, ищем в локальной базе
+        found = find_professions_by_keywords(user_text)
+        if found:
+            response = "🔍 *Нашёл в локальной базе:*\n\n"
+            for prof in found[:3]:
+                response += format_profession(prof)
+                response += "\n" + "—" * 30 + "\n"
+            bot.send_message(message.chat.id, response, parse_mode="Markdown")
+        else:
+            bot.send_message(message.chat.id, 
+                "🤔 Не нашёл подходящих профессий. Расскажи подробнее о своих увлечениях!\n\n"
+                "Или попробуй пройти тест: /test")
+
+def show_result(chat_id, user_id):
+    markup = telebot.types.ReplyKeyboardRemove()
     bot.send_message(chat_id, "🔍 *Анализирую твои ответы...*", parse_mode="Markdown", reply_markup=markup)
     
-    # Получаем подходящие профессии
-    top_professions = calculate_result(user_id)
+    # Собираем ключевые слова из ответов
+    answers = user_answers.get(user_id, [])
+    all_keywords = []
+    for a in answers:
+        if isinstance(a, dict) and 'keywords' in a:
+            all_keywords.extend(a['keywords'])
     
-    # Отправляем результат
-    result_text = "🎉 *Профессии, которые тебе подходят:*\n\n"
-    bot.send_message(chat_id, result_text, parse_mode="Markdown")
+    # Считаем баллы для профессий
+    scores = []
+    for prof in professions:
+        score = 0
+        for kw in all_keywords:
+            if kw.lower() in [k.lower() for k in prof['keywords']]:
+                score += 1
+        scores.append((prof, score))
     
-    for prof in top_professions:
+    scores.sort(key=lambda x: x[1], reverse=True)
+    top = [prof for prof, score in scores[:3] if score > 0]
+    
+    if not top:
+        top = random.sample(professions, 3)
+    
+    for prof in top:
         bot.send_message(chat_id, format_profession(prof), parse_mode="Markdown")
     
-    # Предлагаем пройти тест заново
-    markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    markup.add(telebot.types.KeyboardButton("/start"))
-    bot.send_message(chat_id, "🔄 Хочешь пройти тест еще раз? Нажми /start", reply_markup=markup)
+    bot.send_message(chat_id, "🔄 Хочешь пройти тест еще раз? Нажми /test")
 
 # ======== ЗАПУСК БОТА ========
 if __name__ == "__main__":
-    print("🤖 Бот-тест ПрофИИ запущен!")
+    print("🚀 Бот ПрофИИ запускается...")
+    print(f"✅ Загружено профессий: {len(professions)}")
+    print("✅ Yandex GPT " + ("настроен" if YANDEX_API_KEY != "ВАШ_API_КЛЮЧ_ОТ_YANDEX_CLOUD" else "НЕ настроен"))
+    bot.infinity_polling()
     bot.infinity_polling()
